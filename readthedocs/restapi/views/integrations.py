@@ -12,6 +12,7 @@ from django.http import Http404
 from readthedocs.core.views.hooks import build_branches
 from readthedocs.core.signals import (webhook_github, webhook_bitbucket,
                                       webhook_gitlab)
+from readthedocs.integrations.models import HttpTransaction
 from readthedocs.projects.models import Project
 
 
@@ -30,13 +31,20 @@ class WebhookMixin(object):
     def post(self, request, project_slug, format=None):
         try:
             project = Project.objects.get(slug=project_slug)
+            # TODO handle parser error here
             resp = self.handle_webhook(request, project, request.data)
             if resp is None:
                 log.info('Unhandled webhook event')
                 resp = {'detail': 'Unhandled webhook event'}
+            resp = Response(resp)
+            HttpTransaction.objects.from_transaction(
+                request,
+                resp,
+                related_object=project
+            )
         except Project.DoesNotExist:
             raise Http404('Project does not exist')
-        return Response(resp)
+        return resp
 
     def handle_webhook(self, request, project, data=None):
         """Handle webhook payload"""
@@ -161,3 +169,22 @@ class BitbucketWebhookView(WebhookMixin, APIView):
                 return self.get_response_push(project, branches)
             except KeyError:
                 raise ParseError('Invalid request')
+
+
+class GenericWebhookView(WebhookMixin, APIView):
+
+    """Generic webhook consumer
+
+    Expects the following JSON::
+
+        {
+            "branches": ["master"]
+        }
+    """
+
+    def handle_webhook(self, request, project, data=None):
+        try:
+            branches = list(data.get('branches', [project.get_default_branch()]))
+            return self.get_response_push(project, branches)
+        except TypeError:
+            raise ParseError('Invalid request')

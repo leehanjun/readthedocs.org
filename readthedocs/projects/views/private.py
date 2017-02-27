@@ -5,6 +5,7 @@ import logging
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
+from django.contrib.contenttypes.models import ContentType
 from django.core.urlresolvers import reverse
 from django.conf import settings
 from django.http import (HttpResponseRedirect, HttpResponseNotAllowed,
@@ -18,7 +19,7 @@ from django.middleware.csrf import get_token
 from formtools.wizard.views import SessionWizardView
 from allauth.socialaccount.models import SocialAccount
 
-from vanilla import CreateView, DeleteView, UpdateView
+from vanilla import CreateView, DeleteView, UpdateView, DetailView, GenericView
 
 from readthedocs.bookmarks.models import Bookmark
 from readthedocs.builds.models import Version
@@ -27,6 +28,7 @@ from readthedocs.builds.filters import VersionFilter
 from readthedocs.builds.models import VersionAlias
 from readthedocs.core.utils import trigger_build, broadcast
 from readthedocs.core.mixins import ListViewWithForm
+from readthedocs.integrations.models import HttpTransaction
 from readthedocs.projects.forms import (
     ProjectBasicsForm, ProjectExtraForm,
     ProjectAdvancedForm, UpdateProjectForm, SubprojectForm,
@@ -656,6 +658,9 @@ class DomainMixin(ProjectAdminMixin, PrivateViewMixin):
     form_class = DomainForm
     lookup_url_kwarg = 'domain_pk'
 
+    def get_success_url(self, **kwargs):
+        return reverse('projects_domains', args=[self.get_project().slug])
+
 
 class DomainList(DomainMixin, ListViewWithForm):
     pass
@@ -673,25 +678,48 @@ class DomainDelete(DomainMixin, DeleteView):
     pass
 
 
-@login_required
-def project_resync_webhook(request, project_slug):
-    """
-    Resync a project webhook.
+class IntegrationMixin(ProjectAdminMixin, PrivateViewMixin):
+    model = HttpTransaction
+    lookup_url_kwarg = 'integration_pk'
+
+    def get_queryset(self):
+        self.project = self.get_project()
+        return self.model.objects.filter(
+            content_type=ContentType.objects.filter(
+                app_label='projects',
+                model='project'
+            ),
+            object_id=self.project.pk
+        )
+
+    def get_success_url(self, **kwargs):
+        return reverse('projects_integrations', args=[self.get_project().slug])
+
+    def get_template_names(self):
+        return 'projects/integration{0}.html'.format(self.template_name_suffix)
+
+
+class IntegrationList(IntegrationMixin, ListView):
+    pass
+
+
+class IntegrationDetail(IntegrationMixin, DetailView):
+    pass
+
+
+class IntegrationWebhookSync(PrivateViewMixin, ProjectAdminMixin, GenericView):
+
+    """Resync a project webhook
 
     The signal will add a success/failure message on the request.
     """
-    project = get_object_or_404(Project.objects.for_admin_user(request.user),
-                                slug=project_slug)
-    if request.method == 'POST':
-        attach_webhook(project=project, request=request)
-        return HttpResponseRedirect(reverse('projects_detail',
-                                            args=[project.slug]))
 
-    return render_to_response(
-        'projects/project_resync_webhook.html',
-        {'project': project},
-        context_instance=RequestContext(request)
-    )
+    def post(self, request, *args, **kwargs):
+        attach_webhook(project=self.get_project(), request=request)
+        return HttpResponseRedirect(self.get_success_url())
+
+    def get_success_url(self):
+        return reverse('projects_integrations', args=[self.get_project().slug])
 
 
 class ProjectAdvertisingUpdate(PrivateViewMixin, UpdateView):

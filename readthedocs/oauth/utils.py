@@ -16,6 +16,11 @@ def attach_webhook(project, request=None):
             service = service_cls
             break
     else:
+        messages.error(
+            request,
+            _('Webhook activation failed. '
+              'There are no connected services for this project.')
+        )
         return None
 
     user_accounts = service.for_user(request.user)
@@ -25,7 +30,7 @@ def attach_webhook(project, request=None):
             messages.success(request, _('Webhook activated'))
             project.has_valid_webhook = True
             project.save()
-            break
+            return True
     else:
         if user_accounts:
             messages.error(
@@ -40,3 +45,4 @@ def attach_webhook(project, request=None):
                       network=service.adapter().get_provider().name
                   ))
             )
+        return False
