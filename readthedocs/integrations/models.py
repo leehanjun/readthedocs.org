@@ -86,10 +86,9 @@ class HttpTransaction(models.Model):
             json_value = json.dumps(json.loads(value), sort_keys=True, indent=2)
         except (ValueError, TypeError):
             json_value = value
-        formatter = HtmlFormatter(style='friendly')
+        formatter = HtmlFormatter()
         ret = highlight(json_value, JsonLexer(), formatter)
-        style = '<style>' + formatter.get_style_defs() + '</style>'
-        return mark_safe(style + ret)
+        return mark_safe(ret)
 
     @property
     def formatted_request_body(self):
